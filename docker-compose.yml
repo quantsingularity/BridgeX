@@ -1,0 +1,85 @@
+version: "3.9"
+
+# BridgeX - Open Banking API Connector
+
+networks:
+  bridgex-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: bridgex-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bridgex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bridgex_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-bridgex}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - bridgex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bridgex"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bridgex-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bridgex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: bridgex-server
+    env_file: .env
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bridgex-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bridgex-frontend
+    environment:
+      - VITE_API_URL=http://localhost:4000
+    ports:
+      - "3000:80"
+    depends_on:
+      - server
+    networks:
+      - bridgex-net
+    restart: unless-stopped

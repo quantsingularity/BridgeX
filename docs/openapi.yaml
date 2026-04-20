@@ -1,0 +1,407 @@
+openapi: "3.0.3"
+
+info:
+  title: BridgeX Open Banking API
+  description: |
+    Plaid-style Open Banking Connector. Unified accounts, transactions,
+    and balances API across 5 mock institutions with OAuth 2.0 linking,
+    AES-256 token storage, webhooks, and sandbox mode.
+  version: "0.1.0"
+  contact:
+    name: Abrar Ahmed
+
+servers:
+  - url: http://localhost:4000/v1
+    description: Local development
+  - url: https://api.bridgex.io/v1
+    description: Production
+
+security:
+  - BasicAuth: []
+
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: "Use client_id as username, client_secret as password"
+
+  schemas:
+    Institution:
+      type: object
+      properties:
+        id: { type: string, example: chase }
+        name: { type: string, example: "Chase Bank" }
+        country: { type: string, example: US }
+        primaryColor: { type: string, example: "#117ACA" }
+        oauthSupported: { type: boolean }
+
+    Account:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        institutionId: { type: string }
+        institutionName: { type: string }
+        name: { type: string }
+        officialName: { type: string, nullable: true }
+        type:
+          { type: string, enum: [checking, savings, credit, investment, loan] }
+        currency: { type: string, example: USD }
+        mask: { type: string, example: "4242" }
+        status: { type: string, enum: [active, closed, frozen] }
+
+    Balance:
+      type: object
+      properties:
+        accountId: { type: string, format: uuid }
+        current: { type: number, example: 2845.50 }
+        available: { type: number, nullable: true }
+        limit: { type: number, nullable: true }
+        currency: { type: string, example: USD }
+        updatedAt: { type: string, format: date-time }
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        institutionId: { type: string }
+        amount:
+          { type: number, description: "Positive = debit, negative = credit" }
+        currency: { type: string }
+        description: { type: string }
+        merchantName: { type: string, nullable: true }
+        category: { type: array, items: { type: string } }
+        type: { type: string, enum: [debit, credit] }
+        status: { type: string, enum: [posted, pending] }
+        date: { type: string, format: date }
+        paymentChannel: { type: string, enum: [online, in_store, other] }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+    LinkSession:
+      type: object
+      properties:
+        link_url: { type: string, format: uri }
+        state: { type: string }
+        expires_at: { type: string, format: date-time }
+        sandbox: { type: boolean }
+        institution: { $ref: "#/components/schemas/Institution" }
+
+paths:
+  /institutions:
+    get:
+      summary: List all supported institutions
+      tags: [Institutions]
+      security: []
+      responses:
+        "200":
+          description: List of institutions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  institutions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Institution" }
+
+  /institutions/{id}:
+    get:
+      summary: Get institution by ID
+      tags: [Institutions]
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Institution details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Institution" }
+        "404":
+          description: Not found
+
+  /link/create:
+    post:
+      summary: Create an institution link session
+      tags: [Link]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, client_secret, institution_id]
+              properties:
+                client_id: { type: string }
+                client_secret: { type: string }
+                institution_id: { type: string, example: chase }
+                redirect_uri: { type: string, format: uri }
+      responses:
+        "201":
+          description: Link session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkSession" }
+        "400": { description: Bad request }
+        "401": { description: Invalid credentials }
+
+  /link/status:
+    post:
+      summary: Check link session status
+      tags: [Link]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string }
+      responses:
+        "200":
+          description: Session status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string }
+                  status:
+                    {
+                      type: string,
+                      enum: [pending, completed, failed, expired],
+                    }
+                  institution_id: { type: string }
+
+  /link/{institutionId}:
+    delete:
+      summary: Revoke institution link
+      tags: [Link]
+      security: []
+      parameters:
+        - in: path
+          name: institutionId
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Revoked successfully }
+
+  /accounts:
+    get:
+      summary: Get accounts for all linked institutions
+      tags: [Accounts]
+      parameters:
+        - in: query
+          name: institution_id
+          schema: { type: string }
+          description: Filter to a single institution
+      responses:
+        "200":
+          description: Accounts list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Account" },
+                    }
+                  count: { type: integer }
+
+  /accounts/{accountId}:
+    get:
+      summary: Get a single account
+      tags: [Accounts]
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: institution_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Account details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+
+  /balances:
+    get:
+      summary: Get balances for all linked institutions
+      tags: [Balances]
+      parameters:
+        - in: query
+          name: institution_id
+          schema: { type: string }
+      responses:
+        "200":
+          description: Balances list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balances:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Balance" },
+                    }
+                  count: { type: integer }
+
+  /transactions:
+    get:
+      summary: Get transactions across all linked institutions
+      tags: [Transactions]
+      parameters:
+        - { in: query, name: institution_id, schema: { type: string } }
+        - {
+            in: query,
+            name: account_id,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            in: query,
+            name: start_date,
+            schema: { type: string, format: date },
+          }
+        - { in: query, name: end_date, schema: { type: string, format: date } }
+        - {
+            in: query,
+            name: count,
+            schema: { type: integer, default: 100, maximum: 500 },
+          }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Transaction" },
+                    }
+                  total: { type: integer }
+                  count: { type: integer }
+
+  /webhooks:
+    post:
+      summary: Register a webhook URL
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+      responses:
+        "201":
+          description: Webhook registered with signing secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook_url: { type: string }
+                  webhook_secret:
+                    {
+                      type: string,
+                      description: "HMAC secret - store securely",
+                    }
+    get:
+      summary: Get current webhook configuration
+      tags: [Webhooks]
+      responses:
+        "200": { description: Webhook URL }
+    delete:
+      summary: Remove webhook
+      tags: [Webhooks]
+      responses:
+        "204": { description: Deleted }
+
+  /webhooks/deliveries:
+    get:
+      summary: Webhook delivery log
+      tags: [Webhooks]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 50 } }
+      responses:
+        "200":
+          description: Delivery history
+
+  /apps/me:
+    get:
+      summary: Current app info and linked institutions
+      tags: [Apps]
+      responses:
+        "200": { description: App details with token health }
+
+  /admin/stats:
+    get:
+      summary: Admin dashboard statistics
+      tags: [Admin]
+      security: []
+      responses:
+        "200": { description: Platform stats }
+
+  /admin/apps:
+    get:
+      summary: List all registered apps
+      tags: [Admin]
+      security: []
+      responses:
+        "200": { description: Apps list }
+    post:
+      summary: Create a new app
+      tags: [Admin]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                sandbox_mode: { type: boolean, default: true }
+      responses:
+        "201": { description: Created app with credentials }
+
+  /admin/tokens:
+    get:
+      summary: All institution tokens (no decrypted values)
+      tags: [Admin]
+      security: []
+      responses:
+        "200": { description: Token list }
+
+  /admin/webhooks:
+    get:
+      summary: All webhook deliveries
+      tags: [Admin]
+      security: []
+      responses:
+        "200": { description: Delivery logs }

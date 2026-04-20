@@ -1,0 +1,18 @@
+{
+  "name": "bridgex-js",
+  "version": "0.1.0",
+  "description": "BridgeX Open Banking Connector - JavaScript/Node.js SDK",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "keywords": [
+    "open-banking",
+    "fintech",
+    "bridgex"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
