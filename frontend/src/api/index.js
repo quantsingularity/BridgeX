@@ -10,6 +10,7 @@ export const admin = {
   createApp: (data) => api.post("/v1/admin/apps", data),
   tokens: () => api.get("/v1/admin/tokens"),
   webhooks: (limit = 100) => api.get(`/v1/admin/webhooks?limit=${limit}`),
+  audit: (limit = 100) => api.get(`/v1/admin/audit?limit=${limit}`),
 };
 
 export const institutions = {

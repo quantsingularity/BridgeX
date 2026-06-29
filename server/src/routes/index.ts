@@ -16,6 +16,13 @@ const router = Router();
 router.use("/institutions", institutionsRouter);
 router.use("/link", linkRouter);
 
+// Admin routes must be registered BEFORE the authenticated catch-all below.
+// The authed router is mounted at the root (router.use(authed)) and applies
+// `authenticate` to every request that reaches it, so if /admin were declared
+// after it, every admin call would be rejected with 401 before the admin
+// router ran. (No auth in sandbox - add your own auth for production.)
+router.use("/admin", adminRouter);
+
 // Authenticated + rate-limited routes
 const authed = Router();
 authed.use(authenticate as any);
@@ -27,8 +34,5 @@ authed.use("/webhooks", webhooksRouter);
 authed.use("/apps", appsRouter);
 
 router.use(authed);
-
-// Admin routes (no auth in sandbox - add your own auth for production)
-router.use("/admin", adminRouter);
 
 export default router;

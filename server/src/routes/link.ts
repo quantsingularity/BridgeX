@@ -14,12 +14,17 @@ import { v4 as uuidv4 } from "uuid";
 import { query, queryOne } from "../db";
 import { storeToken } from "../services/tokenService";
 import { queueWebhookEvent } from "../services/webhookService";
+import { recordAudit } from "../services/auditService";
 import { getInstitution } from "../adapters/institutions";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 import { InstitutionId } from "../models/types";
 
 export const linkRouter = Router();
+
+// All routes in this app are mounted under /v1 (see routes/index.ts).
+// Generated OAuth URLs must include that prefix or the browser flow 404s.
+const API_PREFIX = "/v1";
 
 // POST /link/create - initiate a link session
 linkRouter.post(
@@ -63,7 +68,7 @@ linkRouter.post(
       [app.id, institution_id, state, expiresAt],
     );
 
-    const linkUrl = `${config.oauth.callbackBaseUrl}/link/authorize?state=${state}&institution_id=${institution_id}`;
+    const linkUrl = `${config.oauth.callbackBaseUrl}${API_PREFIX}/link/authorize?state=${state}&institution_id=${institution_id}`;
 
     // Sandbox: auto-complete the link immediately (simulate OAuth in background)
     if (app.sandbox_mode) {
@@ -111,7 +116,7 @@ linkRouter.get(
 
     // In sandbox mode, auto-redirect to callback with a fake code
     const callbackUrl =
-      `${config.oauth.callbackBaseUrl}/link/callback` +
+      `${config.oauth.callbackBaseUrl}${API_PREFIX}/link/callback` +
       `?code=sandbox_code_${uuidv4().replace(/-/g, "")}&state=${state}`;
 
     // Simple HTML landing page
@@ -209,6 +214,14 @@ linkRouter.get(
       institution: institutionId,
     });
 
+    await recordAudit({
+      appId: session.app_id,
+      action: "institution.linked",
+      resource: institutionId,
+      ipAddress: req.ip,
+      details: { institution: inst?.name, sandbox: false },
+    });
+
     res.send(`
     <!DOCTYPE html>
     <html>
@@ -273,6 +286,15 @@ linkRouter.delete(
       app.id,
       req.params.institutionId as InstitutionId,
     );
+    if (ok) {
+      await recordAudit({
+        appId: app.id,
+        action: "institution.revoked",
+        resource: req.params.institutionId,
+        ipAddress: req.ip,
+        details: {},
+      });
+    }
     res
       .status(ok ? 200 : 404)
       .json({ ok, institution_id: req.params.institutionId });
@@ -308,4 +330,10 @@ async function simulateSandboxOAuth(
     data: { linked: true, sandbox: true, institution: inst?.name },
   });
   logger.info("Sandbox OAuth simulated", { appId, institutionId });
+  await recordAudit({
+    appId,
+    action: "institution.linked",
+    resource: institutionId,
+    details: { institution: inst?.name, sandbox: true },
+  });
 }

@@ -7,7 +7,13 @@ import crypto from "crypto";
 import { config } from "../config";
 
 const ALGORITHM = "aes-256-cbc";
-const KEY_BUFFER = Buffer.from(config.encryption.key, "utf8").subarray(0, 32);
+// Derive a fixed 32-byte key from the configured secret via SHA-256.
+// This guarantees a valid AES-256 key length regardless of how many
+// characters ENCRYPTION_KEY contains, avoiding "Invalid key length" crashes.
+const KEY_BUFFER = crypto
+  .createHash("sha256")
+  .update(config.encryption.key, "utf8")
+  .digest();
 const IV_LENGTH = config.encryption.ivLength;
 
 export function encrypt(plaintext: string): string {

@@ -1,7 +1,11 @@
 /**
  * BridgeX Data Service
- * Unified data access: sandbox mode returns mock data,
- * live mode decrypts tokens and calls real institution APIs.
+ *
+ * Unified data access layer. In sandbox mode it returns deterministic mock
+ * data from adapters/sandbox.ts. In live mode it decrypts the stored access
+ * token and delegates to a registered LiveInstitutionAdapter; if none is
+ * registered for the institution it raises a clear, honest error instead of
+ * silently returning sandbox data dressed up as live.
  */
 import { Account, Balance, InstitutionId, Transaction } from "../models/types";
 import {
@@ -9,9 +13,9 @@ import {
   generateBalances,
   generateTransactions,
 } from "../adapters/sandbox";
+import { getLiveAdapter } from "../adapters/liveAdapter";
 import { getDecryptedToken } from "./tokenService";
 import { config } from "../config";
-import { logger } from "../utils/logger";
 
 export async function getAccounts(
   appId: string,
@@ -23,17 +27,10 @@ export async function getAccounts(
   }
 
   const tokens = await getDecryptedToken(appId, institutionId);
-  if (!tokens)
+  if (!tokens) {
     throw new Error(`No active token for institution ${institutionId}`);
-
-  // In production: call real institution API with tokens.accessToken
-  // Example: const resp = await axios.get(`${INSTITUTION_BASE_URLS[institutionId]}/accounts`, ...)
-  // Return normalized Account[]
-  logger.warn(
-    "Live institution API not implemented - falling back to sandbox",
-    { institutionId },
-  );
-  return generateAccounts(institutionId, appId);
+  }
+  return getLiveAdapter(institutionId).getAccounts(tokens.accessToken);
 }
 
 export async function getBalances(
@@ -45,8 +42,15 @@ export async function getBalances(
   if (sandbox) {
     return generateBalances(accounts, appId);
   }
-  // In production: call real institution balance endpoint
-  return generateBalances(accounts, appId);
+
+  const tokens = await getDecryptedToken(appId, institutionId);
+  if (!tokens) {
+    throw new Error(`No active token for institution ${institutionId}`);
+  }
+  return getLiveAdapter(institutionId).getBalances(
+    tokens.accessToken,
+    accounts,
+  );
 }
 
 export async function getTransactions(
@@ -64,9 +68,24 @@ export async function getTransactions(
   const sandbox = options.sandbox ?? config.sandboxMode;
   const accounts = await getAccounts(appId, institutionId, sandbox);
 
-  const allTxns = sandbox
-    ? generateTransactions(accounts, appId, 90)
-    : generateTransactions(accounts, appId, 90); // production: call real API
+  let allTxns: Transaction[];
+  if (sandbox) {
+    allTxns = generateTransactions(accounts, appId, 90);
+  } else {
+    const tokens = await getDecryptedToken(appId, institutionId);
+    if (!tokens) {
+      throw new Error(`No active token for institution ${institutionId}`);
+    }
+    allTxns = await getLiveAdapter(institutionId).getTransactions(
+      tokens.accessToken,
+      accounts,
+      {
+        startDate: options.startDate,
+        endDate: options.endDate,
+        accountId: options.accountId,
+      },
+    );
+  }
 
   let filtered = allTxns;
 

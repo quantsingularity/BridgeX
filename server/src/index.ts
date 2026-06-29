@@ -8,6 +8,7 @@ import { config } from "./config";
 import { logger } from "./utils/logger";
 import { checkDbConnection } from "./db";
 import { deliverPendingWebhooks } from "./services/webhookService";
+import { sweepExpiredTokens } from "./services/tokenService";
 import routes from "./routes/index";
 
 const app = express();
@@ -60,6 +61,16 @@ cron.schedule("*/30 * * * * *", async () => {
     await deliverPendingWebhooks();
   } catch (err: any) {
     logger.error("Webhook cron error", { error: err.message });
+  }
+});
+
+// Token expiry sweep - every minute. Flips expired tokens and emits
+// token.expired webhooks so connected apps can prompt a re-link.
+cron.schedule("0 * * * * *", async () => {
+  try {
+    await sweepExpiredTokens();
+  } catch (err: any) {
+    logger.error("Token sweep cron error", { error: err.message });
   }
 });
 

@@ -1,6 +1,7 @@
 import { query, queryOne } from "../db";
 import { encrypt, decrypt } from "../utils/crypto";
 import { TokenRecord, InstitutionId } from "../models/types";
+import { queueWebhookEvent } from "./webhookService";
 import { logger } from "../utils/logger";
 
 export async function storeToken(params: {
@@ -54,9 +55,14 @@ export async function getDecryptedToken(
   appId: string,
   institutionId: InstitutionId,
 ): Promise<{ accessToken: string; refreshToken: string | null } | null> {
-  const row = await queryOne<TokenRecord>(
+  const row = await queryOne<{
+    id: string;
+    encrypted_access_token: string;
+    encrypted_refresh_token: string | null;
+  }>(
     `
-    SELECT * FROM institution_tokens
+    SELECT id, encrypted_access_token, encrypted_refresh_token
+    FROM institution_tokens
     WHERE app_id = $1 AND institution_id = $2 AND status = 'active'
   `,
     [appId, institutionId],
@@ -71,19 +77,29 @@ export async function getDecryptedToken(
   );
 
   return {
-    accessToken: decrypt(row.encryptedAccessToken as unknown as string),
-    refreshToken: row.encryptedRefreshToken
-      ? decrypt(row.encryptedRefreshToken as unknown as string)
+    accessToken: decrypt(row.encrypted_access_token),
+    refreshToken: row.encrypted_refresh_token
+      ? decrypt(row.encrypted_refresh_token)
       : null,
   };
 }
 
-export async function listTokensForApp(
-  appId: string,
-): Promise<
-  Omit<TokenRecord, "encryptedAccessToken" | "encryptedRefreshToken">[]
-> {
-  return query(
+export interface TokenSummary {
+  id: string;
+  app_id: string;
+  institution_id: InstitutionId;
+  institution_name: string;
+  token_expires_at: Date | null;
+  scopes: string[];
+  status: TokenRecord["status"];
+  last_used_at: Date | null;
+  last_refreshed_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export async function listTokensForApp(appId: string): Promise<TokenSummary[]> {
+  return query<TokenSummary>(
     `
     SELECT id, app_id, institution_id, institution_name,
            token_expires_at, scopes, status,
@@ -131,4 +147,44 @@ export async function checkTokenHealth(appId: string): Promise<
   `,
     [appId],
   );
+}
+
+/**
+ * Sweep tokens whose expiry has passed: flip them from 'active' to 'expired'
+ * and emit a `token.expired` webhook so connected apps can re-link. This is run
+ * on a cron and exercises the token.expired event type that was previously
+ * declared but never emitted.
+ */
+export async function sweepExpiredTokens(): Promise<number> {
+  const expired = await query<{
+    id: string;
+    app_id: string;
+    institution_id: InstitutionId;
+    institution_name: string;
+  }>(
+    `UPDATE institution_tokens
+     SET status = 'expired', updated_at = NOW()
+     WHERE status = 'active'
+       AND token_expires_at IS NOT NULL
+       AND token_expires_at <= NOW()
+     RETURNING id, app_id, institution_id, institution_name`,
+  );
+
+  for (const row of expired) {
+    await queueWebhookEvent(row.app_id, {
+      eventType: "token.expired",
+      institutionId: row.institution_id,
+      appId: row.app_id,
+      timestamp: new Date().toISOString(),
+      data: {
+        institution: row.institution_name,
+        reason: "access_token_expired",
+      },
+    });
+  }
+
+  if (expired.length > 0) {
+    logger.info("Expired tokens swept", { count: expired.length });
+  }
+  return expired.length;
 }

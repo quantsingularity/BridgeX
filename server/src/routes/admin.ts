@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { query } from "../db";
 import { generateSecret } from "../utils/crypto";
+import { recordAudit, listAudit } from "../services/auditService";
 
 export const adminRouter = Router();
 
@@ -80,11 +81,30 @@ adminRouter.post(
       [name, clientId, clientSecret, sandbox_mode],
     );
 
+    await recordAudit({
+      appId: app.id,
+      action: "app.created",
+      resource: app.id,
+      ipAddress: req.ip,
+      details: { name, sandbox_mode },
+    });
+
     res.status(201).json({
       ...app,
       client_secret: clientSecret,
       note: "Store client_secret securely - it will not be shown again.",
     });
+  },
+);
+
+// GET /admin/audit - audit trail (most recent first)
+adminRouter.get(
+  "/audit",
+  async (req: Request, res: Response): Promise<void> => {
+    const limit = parseInt((req.query.limit as string) || "100", 10);
+    const appId = (req.query.app_id as string) || undefined;
+    const entries = await listAudit({ appId, limit });
+    res.json({ audit: entries, count: entries.length });
   },
 );
 
