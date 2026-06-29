@@ -1,7 +1,5 @@
 version: "3.9"
 
-# BridgeX - Open Banking API Connector
-
 networks:
   bridgex-net:
     driver: bridge
