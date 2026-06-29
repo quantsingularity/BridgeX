@@ -4,11 +4,7 @@
  */
 
 export type InstitutionId =
-  | "chase"
-  | "wells_fargo"
-  | "bank_of_america"
-  | "barclays"
-  | "revolut";
+  "chase" | "wells_fargo" | "bank_of_america" | "barclays" | "revolut";
 
 export interface Institution {
   id: InstitutionId;
@@ -73,10 +69,7 @@ export interface TransactionLocation {
 // Normalized webhook event
 export interface WebhookEvent {
   eventType:
-    | "transactions.new"
-    | "balance.update"
-    | "account.update"
-    | "token.expired";
+    "transactions.new" | "balance.update" | "account.update" | "token.expired";
   institutionId: InstitutionId;
   appId: string;
   timestamp: string;
